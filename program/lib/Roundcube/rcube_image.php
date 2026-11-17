@@ -172,6 +172,16 @@ class rcube_image
                     // use PHP's Imagick class
                     else {
                         try {
+                            // Guarda en el log el tamaño original y el tamaño al que se va a redimensionar la imagen
+                            rcube::write_log('image', sprintf(
+                                'Redimensionando imagen %s (%s): %dx%d => %dx%d',
+                                $this->image_file,
+                                $props['type'],
+                                $props['width'],
+                                $props['height'],
+                                $width,
+                                $height
+                            ));
                             $image = new \Imagick($this->image_file);
 
                             try {
@@ -193,13 +203,32 @@ class rcube_image
                                 $result = '';
                             }
                         } catch (\Exception $e) {
-                            // Free resources
-                            if (!empty($image)) {
-                                try {
-                                    $image->clear();
-                                } catch (\Exception $e) {
-                                    // Ignore errors
+                            try {
+                                // Guarda en el log el error al redimensionar la imagen
+                                rcube::write_log('errors', sprintf(
+                                    'Error redimensionando imagen %s (%dx%d => %dx%d) (%s): %s',
+                                    $this->image_file,
+                                    $props['width'],
+                                    $props['height'],
+                                    $width,
+                                    $height,
+                                    $rcube->get_user_name() ?? 'unknown',
+                                    $e->getMessage()
+                                ));
+                                // Free resources
+                                if (!empty($image)) {
+                                    rcube::write_log('image', 'Liberando recursos de imagen');
+                                    if (!$image->clear()) {
+                                        rcube::write_log('errors', sprintf(
+                                            'Error liberando recursos de imagen %s', $this->image_file
+                                        ));
+                                    }
+                                    unset($image);
                                 }
+                            } catch (\Exception $e) {
+                                rcube::write_log('errors', sprintf(
+                                    'Error anidado con imagen %s: %s', $this->image_file, $e->getMessage()
+                                ));
                             }
                             rcube::raise_error($e, true, false);
                         }
@@ -215,11 +244,23 @@ class rcube_image
 
         // do we have enough memory? (#1489937)
         if (strtoupper(substr(\PHP_OS, 0, 3)) == 'WIN' && !$this->mem_check($props)) {
+            rcube::write_log('errors', sprintf(
+                'No hay suficiente memoria para procesar la imagen %s (%dx%d)',
+                $this->image_file,
+                $props['width'],
+                $props['height']
+            ));
             return false;
         }
 
         // use GD extension
         if ($props['gd_type'] && $props['width'] > 0 && $props['height'] > 0) {
+            rcube::write_log('image', sprintf(
+                'Redimensionando imagen %s (%dx%d) con GD',
+                $this->image_file,
+                $props['width'],
+                $props['height']
+            ));
             try {
                 if ($props['gd_type'] == \IMAGETYPE_JPEG && function_exists('imagecreatefromjpeg')) {
                     $image = imagecreatefromjpeg($this->image_file);
@@ -232,6 +273,9 @@ class rcube_image
                     $type = 'png';
                 } else {
                     // @TODO: print error to the log?
+                    rcube::write_log('errors', sprintf(
+                        'Formato de imagen no soportado: %s', $props['gd_type']
+                    ));
                     return false;
                 }
 
@@ -356,6 +400,13 @@ class rcube_image
         // use PHP's Imagick class
         if (class_exists('Imagick', false)) {
             try {
+                // Guarda en el log el tamaño original y el formato al que se va a convertir la imagen
+                rcube::write_log('image', sprintf(
+                    'Convirtiendo imagen %s: %s => %s',
+                    $this->image_file,
+                    $props['type'] ?? 'unknown',
+                    self::$extensions[$type]
+                ));
                 $image = new \Imagick($this->image_file);
 
                 $image->setImageColorspace(\Imagick::COLORSPACE_SRGB);
@@ -368,13 +419,28 @@ class rcube_image
                     return true;
                 }
             } catch (\Exception $e) {
-                // Free resources
-                if (!empty($image)) {
-                    try {
-                        $image->clear();
-                    } catch (\Exception $e) {
-                        // Ignore errors
+                try {
+                    // Guarda en el log el error al convertir la imagen. Añade el email del usuario que ha intentado realizar la conversión
+                    rcube::write_log('errors', sprintf(
+                        'Error convirtiendo imagen %s a formato %s (%s): %s',
+                        $this->image_file,
+                        self::$extensions[$type],
+                        $rcube->get_user_name() ?? 'unknown',
+                        $e->getMessage()
+                    ));
+                    // Free resources
+                    if (!empty($image)) {
+                        rcube::write_log('image', 'Liberando recursos de imagen');
+                        if (!$image->clear()) {
+                            rcube::write_log('errors', sprintf(
+                                'Error liberando recursos de imagen %s', $this->image_file
+                            ));
+                        }
                     }
+                } catch (\Exception $e) {
+                    rcube::write_log('errors', sprintf(
+                        'Error anidado con imagen %s: %s', $this->image_file, $e->getMessage()
+                    ));
                 }
                 rcube::raise_error($e, true, false);
             }
@@ -383,6 +449,12 @@ class rcube_image
         // use GD extension (TIFF isn't supported)
         // do we have enough memory? (#1489937)
         if (!$this->mem_check($props)) {
+            rcube::write_log('errors', sprintf(
+                'No hay suficiente memoria para procesar la imagen %s (%dx%d)',
+                $this->image_file,
+                $props['width'],
+                $props['height']
+            ));
             return false;
         }
 
@@ -398,6 +470,9 @@ class rcube_image
                     $image = imagecreatefromwebp($this->image_file);
                 } else {
                     // @TODO: print error to the log?
+                    rcube::write_log('errors', sprintf(
+                        'Formato de imagen no soportado: %s', $props['gd_type']
+                    ));
                     return false;
                 }
 
@@ -419,6 +494,10 @@ class rcube_image
         }
 
         // @TODO: print error to the log?
+        rcube::write_log('errors', sprintf(
+            'Error al procesar la imagen %s',
+            $this->image_file
+        ));
         return false;
     }
 
@@ -478,13 +557,30 @@ class rcube_image
             try {
                 $image = new \Imagick($this->image_file);
 
+                // Guarda en el log la acción de identificar la imagen y su formato
+                rcube::write_log('image', sprintf(
+                    'Identificando imagen %s (%dx%d), formato %s',
+                    $this->image_file,
+                    $image->getImageWidth(),
+                    $image->getImageHeight(),
+                    $image->getImageFormat()
+                ));
+
                 return [
                     strtolower($image->getImageFormat()),
                     $image->getImageWidth(),
                     $image->getImageHeight(),
                 ];
             } catch (\Exception $e) {
-                // ignore
+                try {
+                    // Guarda en el log el error al identificar la imagen
+                    rcube::write_log('errors', sprintf(
+                        'Error identificando imagen %s (%s): %s',
+                        $this->image_file,
+                        $rcube->get_user_name() ?? 'unknown',
+                        $e->getMessage()
+                    ));
+                } catch (\Exception $e) { }
             }
         }
     }
